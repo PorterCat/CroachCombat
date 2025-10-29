@@ -22,6 +22,7 @@ import com.example.croachcombat.ui.theme.CroachCombatTheme
 import java.text.SimpleDateFormat
 import java.util.*
 import android.app.DatePickerDialog
+import android.content.Intent
 import android.webkit.WebView
 import androidx.annotation.DrawableRes
 import androidx.compose.foundation.Image
@@ -29,7 +30,6 @@ import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.ui.res.painterResource
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.foundation.rememberScrollState as RememberScrollState
 
@@ -65,39 +65,87 @@ data class GameSettings(
 @Composable
 fun TabScreen() {
     var selectedTab by remember { mutableStateOf(0) }
-    val tabs = listOf("Регистрация", "Правила", "Авторы", "Настройки")
+    val tabs = listOf("Играть", "Регистрация", "Правила", "Авторы", "Настройки")
 
-    Column(modifier = Modifier.fillMaxSize()) {
+    var settings by remember { mutableStateOf(GameSettings()) }
+
+    Column(modifier = Modifier
+        .fillMaxSize()
+        .systemBarsPadding() // учёт системных панелей сверху/снизу
+    ) {
         Box(
             modifier = Modifier
                 .weight(1f)
-                .padding(top = 50.dp, bottom = 20.dp)
+                .padding(top = 16.dp, bottom = 4.dp)
         ) {
             when (selectedTab) {
-                0 -> RegistrationScreen()
-                1 -> RulesScreen()
-                2 -> AuthorsScreen()
-                3 -> SettingsScreen()
+                0 -> GameScreen(settings = settings)
+                1 -> RegistrationScreen()
+                2 -> RulesScreen()
+                3 -> AuthorsScreen()
+                4 -> SettingsScreen(settings = settings, onSettingsChange = { settings = it })
             }
         }
 
         TabRow(
             selectedTabIndex = selectedTab,
-            modifier = Modifier.fillMaxWidth()
+            modifier = Modifier
+                .fillMaxWidth()
+                .navigationBarsPadding() // отодвигаем TabRow от навигационных кнопок
         ) {
             tabs.forEachIndexed { index, title ->
                 Tab(
-                    text = {
-                        Text(
-                            text = title,
-                            fontSize = MaterialTheme.typography.bodySmall.fontSize
-                        )
-                    },
+                    text = { Text(text = title, fontSize = MaterialTheme.typography.bodySmall.fontSize) },
                     selected = selectedTab == index,
                     onClick = { selectedTab = index }
                 )
             }
         }
+    }
+}
+
+@Composable
+fun SettingsScreen(settings: GameSettings, onSettingsChange: (GameSettings) -> Unit) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        Text("Настройки игры", style = MaterialTheme.typography.headlineSmall)
+
+        Text("Скорость игры: ${String.format("%.1f", settings.gameSpeed)}")
+        Slider(
+            value = settings.gameSpeed,
+            onValueChange = { onSettingsChange(settings.copy(gameSpeed = it)) },
+            valueRange = 0.5f..3.0f,
+            modifier = Modifier.fillMaxWidth()
+        )
+
+        Text("Макс. тараканов: ${settings.maxCockroaches}")
+        Slider(
+            value = settings.maxCockroaches.toFloat(),
+            onValueChange = { onSettingsChange(settings.copy(maxCockroaches = it.toInt())) },
+            valueRange = 1f..20f,
+            modifier = Modifier.fillMaxWidth()
+        )
+
+        Text("Интервал бонусов: ${settings.bonusInterval} сек")
+        Slider(
+            value = settings.bonusInterval.toFloat(),
+            onValueChange = { onSettingsChange(settings.copy(bonusInterval = it.toInt())) },
+            valueRange = 10f..60f,
+            modifier = Modifier.fillMaxWidth()
+        )
+
+        Text("Длительность раунда: ${settings.roundDuration} сек")
+        Slider(
+            value = settings.roundDuration.toFloat(),
+            onValueChange = { onSettingsChange(settings.copy(roundDuration = it.toInt())) },
+            valueRange = 30f..180f,
+            modifier = Modifier.fillMaxWidth()
+        )
     }
 }
 
@@ -337,53 +385,6 @@ fun AuthorItem(author: Author) {
                 style = MaterialTheme.typography.bodyLarge
             )
         }
-    }
-}
-
-@Composable
-fun SettingsScreen() {
-    var settings by remember { mutableStateOf(GameSettings()) }
-
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(16.dp)
-            .verticalScroll(RememberScrollState()),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
-    ) {
-        Text("Настройки игры", style = MaterialTheme.typography.headlineSmall)
-
-        Text("Скорость игры: ${String.format("%.1f", settings.gameSpeed)}")
-        Slider(
-            value = settings.gameSpeed,
-            onValueChange = { settings = settings.copy(gameSpeed = it) },
-            valueRange = 0.5f..3.0f,
-            modifier = Modifier.fillMaxWidth()
-        )
-
-        Text("Макс. тараканов: ${settings.maxCockroaches}")
-        Slider(
-            value = settings.maxCockroaches.toFloat(),
-            onValueChange = { settings = settings.copy(maxCockroaches = it.toInt()) },
-            valueRange = 1f..20f,
-            modifier = Modifier.fillMaxWidth()
-        )
-
-        Text("Интервал бонусов: ${settings.bonusInterval} сек")
-        Slider(
-            value = settings.bonusInterval.toFloat(),
-            onValueChange = { settings = settings.copy(bonusInterval = it.toInt()) },
-            valueRange = 10f..60f,
-            modifier = Modifier.fillMaxWidth()
-        )
-
-        Text("Длительность раунда: ${settings.roundDuration} сек")
-        Slider(
-            value = settings.roundDuration.toFloat(),
-            onValueChange = { settings = settings.copy(roundDuration = it.toInt()) },
-            valueRange = 30f..120f,
-            modifier = Modifier.fillMaxWidth()
-        )
     }
 }
 
