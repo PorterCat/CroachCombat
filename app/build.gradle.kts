@@ -42,11 +42,19 @@ android {
 
 dependencies {
     implementation(libs.androidx.room.ktx)
+    implementation(libs.androidx.compose.ui.unit)
     val room_version = "2.8.3"
 
     implementation("androidx.room:room-runtime:$room_version")
     ksp("androidx.room:room-compiler:$room_version")
 
+
+    implementation("androidx.glance:glance-appwidget:1.0.0")
+    implementation("androidx.work:work-runtime-ktx:2.8.1")
+
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.6.4")
+
+    implementation("androidx.compose.ui:ui:1.9.4")
 
     implementation("io.insert-koin:koin-android:3.4.0")
     implementation("io.insert-koin:koin-androidx-compose:3.4.0")

@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import com.example.croachcombat.database.GameRepository
 import com.example.croachcombat.database.User
 import com.example.croachcombat.network.CbrApiService
+import com.example.croachcombat.widget.WidgetDataStore
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
