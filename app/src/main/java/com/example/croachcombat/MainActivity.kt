@@ -12,13 +12,17 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.croachcombat.database.GameDatabase
 import com.example.croachcombat.database.GameRepository
 import com.example.croachcombat.database.User
+import com.example.croachcombat.network.CbrApiService
 import com.example.croachcombat.ui.theme.CroachCombatTheme
 import com.example.croachcombat.viewmodels.AuthorsScreen
+import com.example.croachcombat.viewmodels.GameViewModel
 import com.example.croachcombat.viewmodels.RecordsScreen
 import com.example.croachcombat.viewmodels.RegistrationScreen
 import com.example.croachcombat.viewmodels.RulesScreen
@@ -100,9 +104,14 @@ fun UserSelectionDialog(
 @Composable
 fun TabScreen(repository: GameRepository) {
     var selectedTab by remember { mutableStateOf(0) }
-    var currentUser by remember { mutableStateOf<com.example.croachcombat.database.User?>(null) }
+    var currentUser by remember { mutableStateOf<User?>(null) }
     var showUserSelection by remember { mutableStateOf(false) }
     val tabs = listOf("Играть", "Регистрация", "Правила", "Авторы", "Настройки", "Рекорды")
+    val context = LocalContext.current
+
+    val gameViewModel: GameViewModel = viewModel(
+        factory = GameViewModelFactory(repository, CbrApiService.create(), context)
+    )
 
     var settings by remember { mutableStateOf(GameSettings()) }
 
@@ -131,7 +140,6 @@ fun TabScreen(repository: GameRepository) {
         .fillMaxSize()
         .systemBarsPadding()
     ) {
-        // Показываем текущего пользователя
         if (currentUser != null) {
             CurrentUserBar(
                 user = currentUser!!,
@@ -150,6 +158,7 @@ fun TabScreen(repository: GameRepository) {
                     settings = settings,
                     currentUser = currentUser,
                     repository = repository,
+                    gameViewModel = gameViewModel,
                     modifier = Modifier.fillMaxSize()
                 )
                 1 -> RegistrationScreen(
@@ -218,6 +227,21 @@ fun CurrentUserBar(user: User, onLogout: () -> Unit, onSelectDifferent: () -> Un
             }
         }
     }
+}
+
+class GameViewModelFactory(
+    private val repository: GameRepository,
+    private val cbrApiService: CbrApiService,
+    private val context: android.content.Context
+) : androidx.lifecycle.ViewModelProvider.Factory {
+    @Suppress("UNCHECKED_CAST")
+    override fun <T : androidx.lifecycle.ViewModel> create(modelClass: Class<T>): T {
+        if (modelClass.isAssignableFrom(GameViewModel::class.java)) {
+            return GameViewModel(repository, cbrApiService, context) as T
+        }
+        throw IllegalArgumentException("Unknown ViewModel class")
+    }
+
 }
 
 @Preview(showBackground = true)

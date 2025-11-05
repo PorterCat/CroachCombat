@@ -27,6 +27,7 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import com.example.croachcombat.database.GameRepository
 import com.example.croachcombat.database.User
+import com.example.croachcombat.viewmodels.GameViewModel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.PI
@@ -41,8 +42,12 @@ fun GameScreen(
     settings: GameSettings,
     currentUser: User?,
     repository: GameRepository,
+    gameViewModel: GameViewModel,
     modifier: Modifier = Modifier
 ) {
+    val gameState by gameViewModel.gameState.collectAsState()
+    val context = LocalContext.current
+
     val spawnDelayMsBase = 1000L
     val spawnDelayMs = max(100L, (spawnDelayMsBase / settings.gameSpeed).toLong())
     val maxInsects = settings.maxCockroaches
@@ -50,38 +55,15 @@ fun GameScreen(
     val insectMaxSpeed = 4f * settings.gameSpeed
     val insectSizePx = 80
 
-    val bonusSpawnInterval = settings.bonusInterval * 1000L
-    val bonusEffectDuration = 10000L
-    val bonusVisibleDuration = 2000L
-    val bonusSizePx = 100
-
-    val bonus = remember { mutableStateOf<BonusState?>(null) }
-    var bonusEffectActive by remember { mutableStateOf(false) }
-    var bonusEffectTimeLeft by remember { mutableFloatStateOf(0f) }
-
     val insects = remember { mutableStateListOf<InsectState>() }
     var nextId by remember { mutableLongStateOf(1L) }
-    var score by remember { mutableIntStateOf(0) }
-    var misses by remember { mutableIntStateOf(0) }
     var areaWidth by remember { mutableIntStateOf(1) }
     var areaHeight by remember { mutableIntStateOf(1) }
-    var timeLeft by remember { mutableIntStateOf(settings.roundDuration) }
     var running by remember { mutableStateOf(true) }
 
     val density = LocalDensity.current
 
-    if (currentUser == null) {
-        Box(modifier = modifier, contentAlignment = Alignment.Center) {
-            Text("Выберите пользователя для начала игры", style = MaterialTheme.typography.headlineSmall)
-        }
-        return
-    }
-
-    val context = LocalContext.current
-    val sensorManager = LocalContext.current.getSystemService(Context.SENSOR_SERVICE) as SensorManager
-    var accelerometerData by remember { mutableStateOf(FloatArray(3)) }
-    var isAccelerometerActive by remember { mutableStateOf(false) }
-
+    // Sound setup
     val soundPool = remember { SoundPool.Builder().setMaxStreams(2).build() }
     var screamSoundId by remember { mutableIntStateOf(0) }
 
@@ -89,109 +71,85 @@ fun GameScreen(
         screamSoundId = soundPool.load(context, R.raw.discord_cat_scream, 1)
     }
 
-    DisposableEffect(isAccelerometerActive) {
-        if (!isAccelerometerActive) {
-            onDispose { }
-        }
+    // Accelerometer setup
+    val sensorManager = context.getSystemService(Context.SENSOR_SERVICE) as SensorManager
+    var accelerometerData by remember { mutableStateOf(FloatArray(3)) }
 
+    // Accelerometer listener
+    DisposableEffect(gameState.bonusEffectActive) {
         val sensor = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
         val listener = object : SensorEventListener {
             override fun onSensorChanged(event: SensorEvent) {
-                if (event.sensor.type == Sensor.TYPE_ACCELEROMETER) {
+                if (event.sensor.type == Sensor.TYPE_ACCELEROMETER && gameState.bonusEffectActive) {
                     accelerometerData = event.values.copyOf()
+                    gameViewModel.updateAccelerometerData(event.values.copyOf())
                 }
             }
 
             override fun onAccuracyChanged(sensor: Sensor, accuracy: Int) {}
         }
 
-        sensorManager.registerListener(listener, sensor, SensorManager.SENSOR_DELAY_GAME)
+        if (gameState.bonusEffectActive) {
+            sensorManager.registerListener(listener, sensor, SensorManager.SENSOR_DELAY_GAME)
+        }
 
         onDispose {
             sensorManager.unregisterListener(listener)
         }
     }
 
-    LaunchedEffect(running, bonusEffectActive) {
-        if (!running || bonusEffectActive) return@LaunchedEffect
+    // Инициализация игры при первом запуске
+    LaunchedEffect(currentUser) {
+        if (currentUser != null && running) {
+            gameViewModel.startGame(settings.roundDuration, currentUser)
+        }
+    }
 
-        while (running && !bonusEffectActive) {
-            delay(bonusSpawnInterval)
-            if (running && bonus.value == null && !bonusEffectActive) {
-                val size = bonusSizePx
-                val x = Random.nextInt(0, max(1, areaWidth - size)).toFloat()
-                val y = Random.nextInt(0, max(1, areaHeight - size)).toFloat()
-                bonus.value = BonusState(nextId++, x, y, size)
+    // Обработка завершения игры
+    LaunchedEffect(gameState.timeLeft) {
+        if (gameState.timeLeft <= 0 && running) {
+            running = false
+            gameViewModel.stopGame()
 
-                launch {
-                    delay(bonusVisibleDuration)
-                    if (bonus.value?.effectActive != true) {
-                        bonus.value = null
-                    }
-                }
+            // Сохраняем рекорд
+            if (gameState.score > 0 && currentUser != null) {
+                val record = com.example.croachcombat.database.GameRecord(
+                    userId = currentUser.id,
+                    playerName = currentUser.fullName,
+                    score = gameState.score,
+                    gameDuration = settings.roundDuration,
+                    difficulty = currentUser.difficulty
+                )
+                repository.saveGameRecord(record)
             }
         }
     }
 
-    LaunchedEffect(bonusEffectActive) {
-        if (bonusEffectActive) {
-            var timeLeft = bonusEffectDuration
-            while (timeLeft > 0 && bonusEffectActive) {
-                delay(100L)
-                timeLeft -= 100
-                bonusEffectTimeLeft = timeLeft.toFloat() / bonusEffectDuration.toFloat()
-                if (timeLeft <= 0) {
-                    bonusEffectActive = false
-                    isAccelerometerActive = false
-                    bonus.value = null
-                }
-            }
-        }
-    }
-
-    LaunchedEffect(running, bonusEffectActive) {
+    // Движение золотого жука
+    LaunchedEffect(running, gameState.goldCockroachActive) {
         while (running) {
-            if (bonusEffectActive) {
-                val snapshot = insects.toList()
-                for (insect in snapshot) {
-                    // Добавляем влияние акселерометра на движение
-                    val tiltX = accelerometerData[0] * 0.1f
-                    val tiltY = accelerometerData[1] * 0.1f
-
-                    insect.vx -= tiltX
-                    insect.vy += tiltY
-
-                    // Ограничиваем максимальную скорость
-                    val maxSpeed = insectMaxSpeed * 2
-                    val currentSpeed = sqrt(insect.vx * insect.vx + insect.vy * insect.vy)
-                    if (currentSpeed > maxSpeed) {
-                        insect.vx = insect.vx / currentSpeed * maxSpeed
-                        insect.vy = insect.vy / currentSpeed * maxSpeed
-                    }
-                }
+            if (gameState.goldCockroachActive && areaWidth > 1 && areaHeight > 1) {
+                gameViewModel.updateGoldCockroachPosition(areaWidth, areaHeight)
             }
-            delay(16L)
+            delay(16L) // ~60 FPS
         }
     }
 
-    LaunchedEffect(bonus.value) {
-        while (bonus.value != null) {
-            delay(50L)
-            bonus.value?.glowPhase = (bonus.value?.glowPhase ?: 0f) + 0.1f
+    // Спавн золотого жука при активации
+    LaunchedEffect(running, gameState.goldCockroachActive) {
+        if (running && gameState.goldCockroachActive && gameState.goldCockroach == null && areaWidth > 100 && areaHeight > 100) {
+            val size = 100
+            val x = Random.nextInt(0, max(1, areaWidth - size)).toFloat()
+            val y = Random.nextInt(0, max(1, areaHeight - size)).toFloat()
+            gameViewModel.spawnGoldCockroach(Pair(x, y), areaWidth, areaHeight)
         }
     }
 
-    LaunchedEffect(running) {
-        if (!running && score > 0) {
-            val record = com.example.croachcombat.database.GameRecord(
-                userId = currentUser.id,
-                playerName = currentUser.toPlayer().fullName,
-                score = score,
-                gameDuration = settings.roundDuration,
-                difficulty = currentUser.difficulty
-            )
-            repository.saveGameRecord(record)
+    if (currentUser == null) {
+        Box(modifier = modifier, contentAlignment = Alignment.Center) {
+            Text("Выберите пользователя для начала игры", style = MaterialTheme.typography.headlineSmall)
         }
+        return
     }
 
     Box(
@@ -204,11 +162,11 @@ fun GameScreen(
             .pointerInput(Unit) {
                 detectTapGestures { _ ->
                     if (!running) return@detectTapGestures
-                    misses += 1
-                    score = max(0, score - 5)
+                    gameViewModel.addMiss()
                 }
             }
     ) {
+        // Спавн обычных тараканов
         LaunchedEffect(running, settings.gameSpeed, settings.maxCockroaches) {
             while (running) {
                 if (insects.size < maxInsects) {
@@ -232,12 +190,33 @@ fun GameScreen(
             }
         }
 
-        LaunchedEffect(running) {
+        // Движение обычных тараканов с учетом эффекта бонуса и акселерометра
+        LaunchedEffect(running, gameState.bonusEffectActive) {
             while (running) {
                 val snapshot = insects.toList()
                 for (insect in snapshot) {
-                    insect.x += insect.vx
-                    insect.y += insect.vy
+                    // Ускорение при активном бонусе
+                    val speedMultiplier = if (gameState.bonusEffectActive) 1.5f else 1f
+
+                    // Влияние акселерометра при активном бонусе
+                    if (gameState.bonusEffectActive) {
+                        val tiltX = accelerometerData[0] * 0.1f
+                        val tiltY = accelerometerData[1] * 0.1f
+
+                        insect.vx -= tiltX
+                        insect.vy += tiltY
+
+                        // Ограничиваем максимальную скорость
+                        val maxSpeed = insectMaxSpeed * 2
+                        val currentSpeed = sqrt(insect.vx * insect.vx + insect.vy * insect.vy)
+                        if (currentSpeed > maxSpeed) {
+                            insect.vx = insect.vx / currentSpeed * maxSpeed
+                            insect.vy = insect.vy / currentSpeed * maxSpeed
+                        }
+                    }
+
+                    insect.x += insect.vx * speedMultiplier
+                    insect.y += insect.vy * speedMultiplier
 
                     if (insect.x <= 0f || insect.x + insect.sizePx >= areaWidth) {
                         insect.vx = -insect.vx
@@ -252,16 +231,17 @@ fun GameScreen(
             }
         }
 
-        LaunchedEffect(running) {
-            while (running && timeLeft > 0) {
-                delay(1000L)
-                timeLeft -= 1
-                if (timeLeft <= 0) {
-                    running = false
-                }
+        // Спавн бонуса
+        LaunchedEffect(running, gameState.bonusActive) {
+            if (running && gameState.bonusActive && gameState.bonusPosition == null && areaWidth > 80 && areaHeight > 80) {
+                val size = 80
+                val x = Random.nextInt(0, max(1, areaWidth - size)).toFloat()
+                val y = Random.nextInt(0, max(1, areaHeight - size)).toFloat()
+                gameViewModel.spawnBonus(Pair(x, y))
             }
         }
 
+        // Отрисовка обычных тараканов
         for (insect in insects.toList()) {
             Image(
                 painter = painterResource(id = insect.resId),
@@ -274,30 +254,115 @@ fun GameScreen(
                         detectTapGestures(onTap = {
                             if (!running) return@detectTapGestures
                             insects.removeAll { it.id == insect.id }
-                            score += 10
+                            gameViewModel.addScore(10)
                         })
                     }
             )
         }
 
+        // Отрисовка золотого таракана - НЕПРОЗРАЧНЫЙ и с движением
+        gameState.goldCockroach?.let { goldCockroach ->
+            val glowAlpha = (sin(System.currentTimeMillis() * 0.01f) * 0.3f + 0.7f).coerceIn(0f, 1f)
+
+            Image(
+                painter = painterResource(id = R.drawable.gold_bug),
+                contentDescription = "Gold Cockroach",
+                modifier = Modifier
+                    .offset { IntOffset(goldCockroach.x.toInt(), goldCockroach.y.toInt()) }
+                    .size(100.dp)
+                    .graphicsLayer {
+                        // УБРАНА ПРОЗРАЧНОСТЬ - золотой жук полностью непрозрачный
+                        alpha = 1f // Вместо glowAlpha
+                        scaleX = 1f + (1f - glowAlpha) * 0.2f
+                        scaleY = 1f + (1f - glowAlpha) * 0.2f
+                        // Добавляем вращение как у обычных жуков
+                        rotationZ = (atan2(goldCockroach.vy, goldCockroach.vx) * 180f / PI).toFloat() + 90
+                    }
+                    .pointerInput(goldCockroach.id) {
+                        detectTapGestures(onTap = {
+                            if (!running) return@detectTapGestures
+                            gameViewModel.collectGoldCockroach()
+                        })
+                    }
+            )
+        }
+
+        // Отрисовка бонуса с анимацией
+        if (gameState.bonusActive && gameState.bonusPosition != null) {
+            val bonus = gameState.bonusPosition!!
+            val glowAlpha = (sin(System.currentTimeMillis() * 0.01f) * 0.3f + 0.7f).coerceIn(0f, 1f)
+
+            Image(
+                painter = painterResource(id = R.drawable.bonus_icon),
+                contentDescription = "Bonus",
+                modifier = Modifier
+                    .offset { IntOffset(bonus.first.toInt(), bonus.second.toInt()) }
+                    .size(80.dp)
+                    .graphicsLayer {
+                        alpha = glowAlpha
+                        scaleX = 1f + (1f - glowAlpha) * 0.2f
+                        scaleY = 1f + (1f - glowAlpha) * 0.2f
+                    }
+                    .pointerInput(Unit) {
+                        detectTapGestures(onTap = {
+                            if (!running) return@detectTapGestures
+                            gameViewModel.collectBonus()
+                            soundPool.play(screamSoundId, 1.0f, 1.0f, 1, 0, 1.0f)
+                        })
+                    }
+            )
+        }
+
+        // Панель статистики - ИСПРАВЛЕНО: добавлен pointerInteropFilter { false }
         Card(
             modifier = Modifier
                 .align(Alignment.TopEnd)
                 .padding(12.dp)
                 .graphicsLayer { alpha = 0.6f }
-                .pointerInteropFilter { false },
+                .pointerInteropFilter { false }, // Это исправляет проблему с нажатиями
             shape = RoundedCornerShape(8.dp),
             elevation = CardDefaults.cardElevation(defaultElevation = 6.dp)
         ) {
-            Row(modifier = Modifier.padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text("Очки: $score")
-                Spacer(modifier = Modifier.width(12.dp))
-                Text("Промахи: $misses")
-                Spacer(modifier = Modifier.width(12.dp))
-                Text("Осталось: ${timeLeft}s")
+            Column(modifier = Modifier.padding(8.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Очки: ${gameState.score}")
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Text("Промахи: ${gameState.misses}")
+                }
+                Spacer(modifier = Modifier.height(4.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Время: ${gameState.timeLeft}s")
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Text("Золото: ${String.format("%.2f", gameState.goldRate)}")
+                }
+
+                // Полоска времени бонуса
+                if (gameState.bonusEffectTimeLeft > 0) {
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(6.dp)
+                            .background(Color.Gray.copy(alpha = 0.5f))
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth(gameState.bonusEffectTimeLeft / 10f)
+                                .height(6.dp)
+                                .background(Color.Green)
+                        )
+                    }
+                    Text(
+                        "БОНУС АКТИВЕН! Наклоняйте устройство!",
+                        modifier = Modifier.fillMaxWidth(),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Color.Green
+                    )
+                }
             }
         }
 
+        // Экран завершения игры
         if (!running) {
             Card(
                 modifier = Modifier
@@ -311,81 +376,31 @@ fun GameScreen(
                 ) {
                     Text("Раунд окончен", style = MaterialTheme.typography.headlineSmall)
                     Spacer(modifier = Modifier.height(8.dp))
-                    Text("Очки: $score")
+                    Text("Очки: ${gameState.score}")
                     Spacer(modifier = Modifier.height(8.dp))
                     Row {
                         Button(onClick = {
                             insects.clear()
                             nextId = 1L
-                            score = 0
-                            misses = 0
-                            timeLeft = settings.roundDuration
                             running = true
+                            gameViewModel.startGame(settings.roundDuration, currentUser)
                         }) {
                             Text("Перезапустить")
                         }
                         Spacer(modifier = Modifier.width(12.dp))
-                        Button(onClick = { /* Закрыть игру — просто оставить экран */ }) {
+                        Button(onClick = { /* Закрыть игру */ }) {
                             Text("Закрыть")
                         }
                     }
                 }
             }
         }
+    }
 
-        bonus.value?.let { currentBonus ->
-            if (currentBonus.active && !currentBonus.effectActive) {
-                val glowAlpha = (sin(currentBonus.glowPhase) * 0.3f + 0.7f).coerceIn(0f, 1f)
-
-                Image(
-                    painter = painterResource(id = currentBonus.resId),
-                    contentDescription = "Bonus",
-                    modifier = Modifier
-                        .offset { IntOffset(currentBonus.x.toInt(), currentBonus.y.toInt()) }
-                        .size(with(density) { currentBonus.sizePx.toDp() })
-                        .graphicsLayer {
-                            alpha = glowAlpha
-                            scaleX = 1f + (1f - glowAlpha) * 0.2f
-                            scaleY = 1f + (1f - glowAlpha) * 0.2f
-                        }
-                        .pointerInput(currentBonus.id) {
-                            detectTapGestures(onTap = {
-                                if (!running) return@detectTapGestures
-
-                                bonus.value = BonusState(
-                                    currentBonus.id,
-                                    currentBonus.x,
-                                    currentBonus.y,
-                                    currentBonus.sizePx,
-                                    currentBonus.resId,
-                                    false,
-                                    effectActive = true,
-                                    effectTimeLeft = currentBonus.effectTimeLeft
-                                )
-                                bonusEffectActive = true
-                                isAccelerometerActive = true
-
-                                soundPool.play(screamSoundId, 1.0f, 1.0f, 1, 0, 1.0f)
-                            })
-                        }
-                )
-            }
-
-            if (bonusEffectActive) {
-                Box(
-                    modifier = Modifier
-                        .width(60.dp)
-                        .height(4.dp)
-                        .background(Color.Gray.copy(alpha = 0.5f))
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .width(60.dp * bonusEffectTimeLeft)
-                            .height(4.dp)
-                            .background(Color.Red)
-                    )
-                }
-            }
+    // Cleanup sound pool
+    DisposableEffect(Unit) {
+        onDispose {
+            soundPool.release()
         }
     }
 }
