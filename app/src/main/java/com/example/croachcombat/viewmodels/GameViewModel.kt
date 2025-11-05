@@ -6,14 +6,12 @@ import androidx.lifecycle.viewModelScope
 import com.example.croachcombat.database.GameRepository
 import com.example.croachcombat.database.User
 import com.example.croachcombat.network.CbrApiService
+import com.example.croachcombat.widget.GoldRateWidget
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-import java.text.DecimalFormat
-import java.text.ParseException
 import kotlin.math.roundToInt
-import kotlin.random.Random
 
 data class GoldCockroachState(
     val id: Long,
@@ -21,7 +19,7 @@ data class GoldCockroachState(
     var y: Float,
     var vx: Float,
     var vy: Float,
-    val size: Int = 50
+    val size: Int = 100
 )
 
 data class GameState(
@@ -103,8 +101,8 @@ class GameViewModel(
 
         val minSpeed = 1f
         val maxSpeed = 4f
-        val vx = (Random.nextFloat() * (maxSpeed - minSpeed) + minSpeed) * if (Random.nextBoolean()) 1f else -1f
-        val vy = (Random.nextFloat() * (maxSpeed - minSpeed) + minSpeed) * if (Random.nextBoolean()) 1f else -1f
+        val vx = (kotlin.random.Random.nextFloat() * (maxSpeed - minSpeed) + minSpeed) * if (kotlin.random.Random.nextBoolean()) 1f else -1f
+        val vy = (kotlin.random.Random.nextFloat() * (maxSpeed - minSpeed) + minSpeed) * if (kotlin.random.Random.nextBoolean()) 1f else -1f
 
         val goldCockroach = GoldCockroachState(
             id = System.currentTimeMillis(),
@@ -139,7 +137,6 @@ class GameViewModel(
         var newVx = currentGoldCockroach.vx
         var newVy = currentGoldCockroach.vy
 
-        // Отскок от стен
         if (newX <= 0f || newX + currentGoldCockroach.size >= areaWidth) {
             newVx = -newVx
             newX = newX.coerceIn(0f, (areaWidth - currentGoldCockroach.size).toFloat())
@@ -160,7 +157,7 @@ class GameViewModel(
     }
 
     fun collectGoldCockroach() {
-        val points = (_gameState.value.goldRate * 10).roundToInt()
+        val points = (_gameState.value.goldRate / 500).roundToInt()
         addScore(points)
         _gameState.value = _gameState.value.copy(
             goldCockroachActive = false,
@@ -256,8 +253,7 @@ class GameViewModel(
         movementTimer?.cancel()
         movementTimer = viewModelScope.launch {
             while (_gameState.value.isRunning) {
-                kotlinx.coroutines.delay(16L) // ~60 FPS
-                // Движение золотых жуков будет обновляться в GameScreen с учетом areaWidth и areaHeight
+                kotlinx.coroutines.delay(16L)
             }
         }
     }
@@ -265,25 +261,38 @@ class GameViewModel(
     private fun loadGoldRate() {
         viewModelScope.launch {
             try {
-                val response = cbrApiService.getDailyRates()
-                val goldValute = response.valutes.find { it.charCode == "XAU" }
-                goldValute?.let {
-                    val rate = parseRate(it.value) / it.nominal
+                val prefs = context.getSharedPreferences(GoldRateWidget.WIDGET_PREF_NAME, Context.MODE_PRIVATE)
+                val savedRate = prefs.getFloat(GoldRateWidget.KEY_GOLD_RATE, 0f).toDouble()
+
+                if (savedRate > 0) {
+                    _gameState.value = _gameState.value.copy(goldRate = savedRate)
+                }
+
+                val today = CbrApiService.getTodayDate()
+                val response = cbrApiService.getMetalRates(today, today)
+                val goldRecord = response.records.find { it.code == "1" }
+
+                if (goldRecord != null) {
+                    val rate = goldRecord.sell.replace(",", ".").toDoubleOrNull() ?: 0.0
                     _gameState.value = _gameState.value.copy(goldRate = rate)
+                    prefs.edit().putFloat(GoldRateWidget.KEY_GOLD_RATE, rate.toFloat()).apply()
+                    GoldRateWidget.updateAllWidgets(context)
+                } else {
+                    val fallbackRate = 5432.10
+                    _gameState.value = _gameState.value.copy(goldRate = fallbackRate)
+                    prefs.edit().putFloat(GoldRateWidget.KEY_GOLD_RATE, fallbackRate.toFloat()).apply()
+                    GoldRateWidget.updateAllWidgets(context)
                 }
             } catch (e: Exception) {
-                e.printStackTrace()
-                _gameState.value = _gameState.value.copy(goldRate = 5000.0)
+                val prefs = context.getSharedPreferences(GoldRateWidget.WIDGET_PREF_NAME, Context.MODE_PRIVATE)
+                val savedRate = prefs.getFloat(GoldRateWidget.KEY_GOLD_RATE, 0f).toDouble()
+                val fallbackRate = if (savedRate > 0) savedRate else 5432.10
+                _gameState.value = _gameState.value.copy(goldRate = fallbackRate)
+                if (savedRate == 0.toDouble()) {
+                    prefs.edit().putFloat(GoldRateWidget.KEY_GOLD_RATE, fallbackRate.toFloat()).apply()
+                    GoldRateWidget.updateAllWidgets(context)
+                }
             }
-        }
-    }
-
-    private fun parseRate(rateString: String): Double {
-        return try {
-            val formatted = rateString.replace(",", ".")
-            DecimalFormat.getInstance().parse(formatted)?.toDouble() ?: 0.0
-        } catch (e: ParseException) {
-            0.0
         }
     }
 

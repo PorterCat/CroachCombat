@@ -27,7 +27,7 @@
         </activity>
 
         <receiver
-            android:name=".widget.GoldRateWidget$GoldRateWidgetReceiver"
+            android:name=".widget.GoldRateWidget"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />

@@ -1,70 +1,124 @@
 package com.example.croachcombat.widget
 
+import android.app.PendingIntent
+import android.appwidget.AppWidgetManager
+import android.appwidget.AppWidgetProvider
+import android.content.ComponentName
 import android.content.Context
-import androidx.compose.ui.unit.TextUnit
-import androidx.glance.GlanceId
-import androidx.glance.appwidget.GlanceAppWidget
-import androidx.glance.appwidget.GlanceAppWidgetReceiver
-import androidx.glance.appwidget.provideContent
-import androidx.glance.appwidget.updateAll
-import androidx.glance.layout.Alignment
-import androidx.glance.layout.Column
-import androidx.glance.layout.fillMaxSize
-import androidx.glance.text.Text
-import androidx.glance.text.TextStyle
-import androidx.glance.unit.ColorProvider
-import androidx.work.CoroutineWorker
-import androidx.work.PeriodicWorkRequestBuilder
-import androidx.work.WorkManager
-import androidx.work.WorkerParameters
+import android.content.Intent
+import android.widget.RemoteViews
+import androidx.work.*
+import com.example.croachcombat.MainActivity
+import com.example.croachcombat.R
 import com.example.croachcombat.network.CbrApiService
-import com.example.croachcombat.widget.GoldRateWorker.Companion.scheduleWidgetUpdate
-import kotlinx.coroutines.delay
 import java.text.DecimalFormat
-import java.text.ParseException
 import java.util.concurrent.TimeUnit
 
-class GoldRateWidget : GlanceAppWidget() {
+class GoldRateWidget : AppWidgetProvider() {
 
-    override suspend fun provideGlance(context: Context, id: GlanceId) {
-        provideContent {
-            val goldRate = WidgetDataStore.getGoldRate(context)
-
-            Column(
-                modifier = androidx.glance.GlanceModifier
-                    .fillMaxSize(),
-//                    .background(androidx.glance.BackgroundModifier. RadialGradient(
-//                        colors = listOf(
-//                            ColorProvider(androidx.compose.ui.graphics.Color(0xFFFFD700)),
-//                            ColorProvider(androidx.compose.ui.graphics.Color(0xFFFFA500))
-//                        )
-//                    )),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                Text(
-                    text = "Золото ЦБ",
-                    style = TextStyle(
-                        color = ColorProvider(androidx.compose.ui.graphics.Color.White)
-                    )
-                )
-                Text(
-                    text = if (goldRate > 0) "${DecimalFormat("#.##").format(goldRate)} руб/г" else "Загрузка...",
-                    style = TextStyle(
-                        color = ColorProvider(androidx.compose.ui.graphics.Color.White),
-                        //fontSize = androidx.glance.unit.TextUnit(12f)
-                    )
-                )
-            }
+    override fun onUpdate(
+        context: Context,
+        appWidgetManager: AppWidgetManager,
+        appWidgetIds: IntArray
+    ) {
+        for (appWidgetId in appWidgetIds) {
+            updateAppWidget(context, appWidgetManager, appWidgetId)
         }
     }
 
-    class GoldRateWidgetReceiver : GlanceAppWidgetReceiver() {
-        override val glanceAppWidget: GlanceAppWidget = GoldRateWidget()
+    override fun onEnabled(context: Context) {
+        scheduleWidgetUpdate(context)
+    }
 
-        override fun onEnabled(context: Context?) {
-            super.onEnabled(context)
-            scheduleWidgetUpdate(context!!)
+    override fun onDisabled(context: Context) {
+        WorkManager.getInstance(context).cancelUniqueWork(WIDGET_UPDATE_WORK_NAME)
+    }
+
+    private fun updateAppWidget(
+        context: Context,
+        appWidgetManager: AppWidgetManager,
+        appWidgetId: Int
+    ) {
+        val intent = Intent(context, MainActivity::class.java)
+        val pendingIntent = PendingIntent.getActivity(
+            context, 0, intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val prefs = context.getSharedPreferences(WIDGET_PREF_NAME, Context.MODE_PRIVATE)
+        val goldRate = prefs.getFloat(KEY_GOLD_RATE, 0f)
+
+        val views = RemoteViews(context.packageName, R.layout.widget_gold_rate)
+
+        val rateText = if (goldRate > 0) {
+            "${DecimalFormat("#.##").format(goldRate)} руб/г"
+        } else {
+            "Загрузка..."
+        }
+
+        views.setTextViewText(R.id.widget_rate, rateText)
+        views.setOnClickPendingIntent(R.id.widget_layout, pendingIntent)
+
+        appWidgetManager.updateAppWidget(appWidgetId, views)
+    }
+
+    companion object {
+        const val WIDGET_PREF_NAME = "GoldWidgetPrefs"
+        const val KEY_GOLD_RATE = "gold_rate"
+        const val WIDGET_UPDATE_WORK_NAME = "gold_widget_update"
+
+        fun updateAllWidgets(context: Context) {
+            val appWidgetManager = AppWidgetManager.getInstance(context)
+            val appWidgetIds = appWidgetManager.getAppWidgetIds(
+                ComponentName(context, GoldRateWidget::class.java)
+            )
+            for (appWidgetId in appWidgetIds) {
+                updateAppWidget(context, appWidgetManager, appWidgetId)
+            }
+        }
+
+        private fun updateAppWidget(
+            context: Context,
+            appWidgetManager: AppWidgetManager,
+            appWidgetId: Int
+        ) {
+            val intent = Intent(context, MainActivity::class.java)
+            val pendingIntent = PendingIntent.getActivity(
+                context, 0, intent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+
+            val prefs = context.getSharedPreferences(WIDGET_PREF_NAME, Context.MODE_PRIVATE)
+            val goldRate = prefs.getFloat(KEY_GOLD_RATE, 0f)
+
+            val views = RemoteViews(context.packageName, R.layout.widget_gold_rate)
+
+            views.setTextViewText(
+                R.id.widget_rate,
+                if (goldRate > 0) "${DecimalFormat("#.##").format(goldRate)} руб/г" else "Загрузка..." // 10313,43
+            )
+
+            views.setOnClickPendingIntent(R.id.widget_layout, pendingIntent)
+
+            appWidgetManager.updateAppWidget(appWidgetId, views)
+        }
+
+        fun scheduleWidgetUpdate(context: Context) {
+            val workRequest = PeriodicWorkRequestBuilder<GoldRateWorker>(
+                4, TimeUnit.HOURS,
+                1, TimeUnit.HOURS
+            ).build()
+
+            WorkManager.getInstance(context).enqueueUniquePeriodicWork(
+                WIDGET_UPDATE_WORK_NAME,
+                ExistingPeriodicWorkPolicy.KEEP,
+                workRequest
+            )
+        }
+
+        fun updateGoldRateImmediately(context: Context) {
+            val workRequest = OneTimeWorkRequestBuilder<GoldRateWorker>().build()
+            WorkManager.getInstance(context).enqueue(workRequest)
         }
     }
 }
@@ -77,59 +131,33 @@ class GoldRateWorker(
     override suspend fun doWork(): Result {
         return try {
             val apiService = CbrApiService.create()
-            val response = apiService.getDailyRates()
-            val goldValute = response.valutes.find { it.charCode == "XAU" }
+            val yesterday = CbrApiService.getYesterdayDate()
 
-            goldValute?.let {
-                val rate = parseRate(it.value) / it.nominal
-                WidgetDataStore.saveGoldRate(applicationContext, rate)
+            val response = apiService.getMetalRates(yesterday, yesterday)
+            val goldRecord = response.records.find { it.code == "1" }
 
-                // Обновляем все виджеты
-                GoldRateWidget().updateAll(applicationContext)
+            if (goldRecord != null) {
+                val rateString = goldRecord.sell.replace(",", ".")
+                val rate = rateString.toFloatOrNull() ?: 5432.10f
+
+                val prefs = applicationContext.getSharedPreferences(
+                    GoldRateWidget.WIDGET_PREF_NAME,
+                    Context.MODE_PRIVATE
+                )
+                prefs.edit().putFloat(GoldRateWidget.KEY_GOLD_RATE, rate).apply()
+
+                GoldRateWidget.updateAllWidgets(applicationContext)
             }
-
             Result.success()
         } catch (e: Exception) {
-            e.printStackTrace()
-            // Повторяем через 30 минут при ошибке
-            delay(30 * 60 * 1000L)
-            Result.retry()
+            val prefs = applicationContext.getSharedPreferences(
+                GoldRateWidget.WIDGET_PREF_NAME,
+                Context.MODE_PRIVATE
+            )
+            val fallbackRate = 5432.10f
+            prefs.edit().putFloat(GoldRateWidget.KEY_GOLD_RATE, fallbackRate).apply()
+            GoldRateWidget.updateAllWidgets(applicationContext)
+            Result.success()
         }
-    }
-
-    private fun parseRate(rateString: String): Double {
-        return try {
-            val formatted = rateString.replace(",", ".")
-            DecimalFormat.getInstance().parse(formatted)?.toDouble() ?: 0.0
-        } catch (e: ParseException) {
-            0.0
-        }
-    }
-
-    companion object {
-        fun scheduleWidgetUpdate(context: Context) {
-            val periodicWorkRequest = PeriodicWorkRequestBuilder<GoldRateWorker>(
-                2, TimeUnit.MINUTES
-            ).build()
-
-            WorkManager.getInstance(context).enqueue(periodicWorkRequest)
-        }
-    }
-}
-
-object WidgetDataStore {
-    private const val PREF_NAME = "gold_widget_prefs"
-    private const val KEY_GOLD_RATE = "gold_rate"
-
-    fun saveGoldRate(context: Context, rate: Double) {
-        context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
-            .edit()
-            .putFloat(KEY_GOLD_RATE, rate.toFloat())
-            .apply()
-    }
-
-    fun getGoldRate(context: Context): Double {
-        return context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
-            .getFloat(KEY_GOLD_RATE, 0f).toDouble()
     }
 }

@@ -16,6 +16,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.work.ExistingPeriodicWorkPolicy
+import androidx.work.PeriodicWorkRequestBuilder
+import androidx.work.WorkManager
 import com.example.croachcombat.database.GameDatabase
 import com.example.croachcombat.database.GameRepository
 import com.example.croachcombat.database.User
@@ -27,7 +30,9 @@ import com.example.croachcombat.viewmodels.RecordsScreen
 import com.example.croachcombat.viewmodels.RegistrationScreen
 import com.example.croachcombat.viewmodels.RulesScreen
 import com.example.croachcombat.viewmodels.SettingsScreen
-import java.util.*
+import com.example.croachcombat.widget.GoldRateWidget
+import com.example.croachcombat.widget.GoldRateWorker
+import java.util.concurrent.TimeUnit
 
 class MainActivity : ComponentActivity() {
     private lateinit var repository: GameRepository
@@ -49,6 +54,21 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+
+        GoldRateWidget.updateGoldRateImmediately(this)
+        GoldRateWidget.scheduleWidgetUpdate(this)
+    }
+
+    private fun scheduleWidgetUpdate() {
+        val workRequest = PeriodicWorkRequestBuilder<GoldRateWorker>(
+            4, TimeUnit.HOURS
+        ).build()
+
+        WorkManager.getInstance(this).enqueueUniquePeriodicWork(
+            GoldRateWidget.WIDGET_UPDATE_WORK_NAME,
+            ExistingPeriodicWorkPolicy.KEEP,
+            workRequest
+        )
     }
 }
 
@@ -103,7 +123,7 @@ fun UserSelectionDialog(
 
 @Composable
 fun TabScreen(repository: GameRepository) {
-    var selectedTab by remember { mutableStateOf(0) }
+    var selectedTab by remember { mutableIntStateOf(0) }
     var currentUser by remember { mutableStateOf<User?>(null) }
     var showUserSelection by remember { mutableStateOf(false) }
     val tabs = listOf("Играть", "Регистрация", "Правила", "Авторы", "Настройки", "Рекорды")

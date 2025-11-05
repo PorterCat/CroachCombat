@@ -1,35 +1,36 @@
 package com.example.croachcombat.network
 
+import org.simpleframework.xml.Attribute
 import org.simpleframework.xml.Element
 import org.simpleframework.xml.ElementList
 import org.simpleframework.xml.Root
 
-@Root(name = "Valute", strict = false)
-data class Valute @JvmOverloads constructor(
-    @field:Element(name = "NumCode")
-    var numCode: String = "",
-
-    @field:Element(name = "CharCode")
-    var charCode: String = "",
-
-    @field:Element(name = "Nominal")
-    var nominal: Int = 0,
-
-    @field:Element(name = "Name")
-    var name: String = "",
-
-    @field:Element(name = "Value")
-    var value: String = ""
-)
-
-@Root(name = "ValCurs", strict = false)
-data class ValCurs @JvmOverloads constructor(
-    @field:Element(name = "Date")
+@Root(name = "Record", strict = false)
+data class MetalRecord @JvmOverloads constructor(
+    @field:Attribute(name = "Date", required = false)
     var date: String = "",
 
-    @field:Element(name = "name")
+    @field:Attribute(name = "Code", required = false)
+    var code: String = "",
+
+    @field:Element(name = "Buy", required = false)
+    var buy: String = "",
+
+    @field:Element(name = "Sell", required = false)
+    var sell: String = ""
+)
+
+@Root(name = "Metall", strict = false)
+data class MetalRates @JvmOverloads constructor(
+    @field:Attribute(name = "FromDate", required = false)
+    var fromDate: String = "",
+
+    @field:Attribute(name = "ToDate", required = false)
+    var toDate: String = "",
+
+    @field:Attribute(name = "name", required = false)
     var name: String = "",
 
     @field:ElementList(inline = true, required = false)
-    var valutes: List<Valute> = emptyList()
+    var records: MutableList<MetalRecord> = ArrayList()
 )
