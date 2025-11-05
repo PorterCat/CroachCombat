@@ -11,6 +11,28 @@ data class Player(
     var zodiacSign: ZodiacSign
 )
 
+fun Player.toUser(): com.example.croachcombat.database.User {
+    return com.example.croachcombat.database.User(
+        fullName = this.fullName,
+        gender = this.gender,
+        birthday = this.birthday,
+        difficulty = this.difficulty,
+        course = this.course,
+        zodiacSign = this.zodiacSign
+    )
+}
+
+fun com.example.croachcombat.database.User.toPlayer(): Player {
+    return Player(
+        fullName = this.fullName,
+        gender = this.gender,
+        birthday = this.birthday,
+        difficulty = this.difficulty,
+        course = this.course,
+        zodiacSign = this.zodiacSign
+    )
+}
+
 enum class Gender {
     Male,
     Female
