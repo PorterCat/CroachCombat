@@ -25,6 +25,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.croachcombat.database.GameRepository
 import com.example.croachcombat.database.User
 import com.example.croachcombat.viewmodels.GameViewModel
@@ -45,7 +46,7 @@ fun GameScreen(
     gameViewModel: GameViewModel,
     modifier: Modifier = Modifier
 ) {
-    val gameState by gameViewModel.gameState.collectAsState()
+    val gameState by gameViewModel.gameState.collectAsStateWithLifecycle()
     val context = LocalContext.current
 
     val spawnDelayMsBase = 1000L
@@ -98,20 +99,17 @@ fun GameScreen(
         }
     }
 
-    // Инициализация игры при первом запуске
     LaunchedEffect(currentUser) {
-        if (currentUser != null && running) {
+        if (currentUser != null && gameState.timeLeft > 0 && !gameState.isRunning) {
             gameViewModel.startGame(settings.roundDuration, currentUser)
         }
     }
 
     // Обработка завершения игры
-    LaunchedEffect(gameState.timeLeft) {
-        if (gameState.timeLeft <= 0 && running) {
-            running = false
+    LaunchedEffect(gameState.timeLeft, gameState.isRunning) {
+        if (gameState.timeLeft <= 0 && gameState.isRunning) {
             gameViewModel.stopGame()
 
-            // Сохраняем рекорд
             if (gameState.score > 0 && currentUser != null) {
                 val record = com.example.croachcombat.database.GameRecord(
                     userId = currentUser.id,
@@ -166,8 +164,10 @@ fun GameScreen(
                 }
             }
     ) {
+        val isGameRunning = gameState.isRunning
+
         // Спавн обычных тараканов
-        LaunchedEffect(running, settings.gameSpeed, settings.maxCockroaches) {
+        LaunchedEffect(isGameRunning, settings.gameSpeed, settings.maxCockroaches) {
             while (running) {
                 if (insects.size < maxInsects) {
                     val size = insectSizePx
@@ -363,7 +363,7 @@ fun GameScreen(
         }
 
         // Экран завершения игры
-        if (!running) {
+        if (!isGameRunning && gameState.timeLeft <= 0) {
             Card(
                 modifier = Modifier
                     .align(Alignment.Center)
@@ -380,15 +380,15 @@ fun GameScreen(
                     Spacer(modifier = Modifier.height(8.dp))
                     Row {
                         Button(onClick = {
-                            insects.clear()
-                            nextId = 1L
-                            running = true
+                            // Перезапускаем игру через ViewModel
                             gameViewModel.startGame(settings.roundDuration, currentUser)
                         }) {
                             Text("Перезапустить")
                         }
                         Spacer(modifier = Modifier.width(12.dp))
-                        Button(onClick = { /* Закрыть игру */ }) {
+                        Button(onClick = {
+                            gameViewModel.stopGame()
+                        }) {
                             Text("Закрыть")
                         }
                     }

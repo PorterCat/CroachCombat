@@ -15,60 +15,138 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import com.example.croachcombat.database.GameDatabase
+import org.koin.androidx.compose.get
 import com.example.croachcombat.database.GameRepository
 import com.example.croachcombat.database.User
 import com.example.croachcombat.network.CbrApiService
 import com.example.croachcombat.ui.theme.CroachCombatTheme
 import com.example.croachcombat.viewmodels.AuthorsScreen
 import com.example.croachcombat.viewmodels.GameViewModel
+import com.example.croachcombat.viewmodels.MainViewModel
 import com.example.croachcombat.viewmodels.RecordsScreen
 import com.example.croachcombat.viewmodels.RegistrationScreen
 import com.example.croachcombat.viewmodels.RulesScreen
 import com.example.croachcombat.viewmodels.SettingsScreen
 import com.example.croachcombat.widget.GoldRateWidget
 import com.example.croachcombat.widget.GoldRateWorker
+import org.koin.androidx.compose.koinViewModel
+import org.koin.core.parameter.parametersOf
 import java.util.concurrent.TimeUnit
 
 class MainActivity : ComponentActivity() {
-    private lateinit var repository: GameRepository
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
-        val database = GameDatabase.getInstance(this)
-        repository = GameRepository(database)
-
         setContent {
             CroachCombatTheme {
-                Surface(
-                    modifier = Modifier.fillMaxSize(),
-                    color = MaterialTheme.colorScheme.background
-                ) {
-                    TabScreen(repository = repository)
-                }
+                TabScreen()
+            }
+        }
+    }
+}
+
+@Composable
+fun TabScreen() {
+    val mainViewModel: MainViewModel = koinViewModel()
+    val repository: GameRepository = get()
+
+    // Collect state from MainViewModel
+    val currentUser by mainViewModel.currentUser.collectAsStateWithLifecycle()
+    val selectedTab by mainViewModel.selectedTab.collectAsStateWithLifecycle()
+    val showUserSelection by mainViewModel.showUserSelection.collectAsStateWithLifecycle()
+
+    val tabs = listOf("Играть", "Регистрация", "Правила", "Авторы", "Настройки", "Рекорды")
+
+    // Получаем GameViewModel
+    val gameViewModel: GameViewModel = koinViewModel()
+
+    var settings by remember { mutableStateOf(GameSettings()) }
+
+    // Показываем диалог выбора пользователя когда нужно
+    LaunchedEffect(selectedTab) {
+        if (selectedTab == 0 && currentUser == null) {
+            mainViewModel.setShowUserSelection(true)
+        }
+    }
+
+    if (showUserSelection) {
+        UserSelectionDialog(
+            repository = repository,
+            onUserSelected = { user ->
+                mainViewModel.setCurrentUser(user)
+                mainViewModel.setShowUserSelection(false)
+            },
+            onNewUser = {
+                mainViewModel.setSelectedTab(1)
+                mainViewModel.setShowUserSelection(false)
+            },
+            onDismiss = { mainViewModel.setShowUserSelection(false) }
+        )
+    }
+
+    Column(modifier = Modifier
+        .fillMaxSize()
+        .systemBarsPadding()
+    ) {
+        if (currentUser != null) {
+            CurrentUserBar(
+                user = currentUser!!,
+                onLogout = {
+                    mainViewModel.setCurrentUser(null)
+                    gameViewModel.stopGame()
+                },
+                onSelectDifferent = { mainViewModel.setShowUserSelection(true) }
+            )
+        }
+
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .padding(top = 16.dp, bottom = 4.dp)
+        ) {
+            when (selectedTab) {
+                0 -> GameScreen(
+                    settings = settings,
+                    currentUser = currentUser,
+                    repository = repository,
+                    gameViewModel = gameViewModel,
+                    modifier = Modifier.fillMaxSize()
+                )
+                1 -> RegistrationScreen(
+                    repository = repository,
+                    onUserRegistered = { user ->
+                        mainViewModel.setCurrentUser(user)
+                        mainViewModel.setSelectedTab(0)
+                    }
+                )
+                2 -> RulesScreen()
+                3 -> AuthorsScreen()
+                4 -> SettingsScreen(settings = settings, onSettingsChange = { settings = it })
+                5 -> RecordsScreen(repository = repository)
             }
         }
 
-        GoldRateWidget.updateGoldRateImmediately(this)
-        GoldRateWidget.scheduleWidgetUpdate(this)
-    }
-
-    private fun scheduleWidgetUpdate() {
-        val workRequest = PeriodicWorkRequestBuilder<GoldRateWorker>(
-            4, TimeUnit.HOURS
-        ).build()
-
-        WorkManager.getInstance(this).enqueueUniquePeriodicWork(
-            GoldRateWidget.WIDGET_UPDATE_WORK_NAME,
-            ExistingPeriodicWorkPolicy.KEEP,
-            workRequest
-        )
+        TabRow(
+            selectedTabIndex = selectedTab,
+            modifier = Modifier
+                .fillMaxWidth()
+                .navigationBarsPadding()
+        ) {
+            tabs.forEachIndexed { index, title ->
+                Tab(
+                    text = { Text(text = title, fontSize = MaterialTheme.typography.bodySmall.fontSize) },
+                    selected = selectedTab == index,
+                    onClick = { mainViewModel.setSelectedTab(index) }
+                )
+            }
+        }
     }
 }
 
@@ -119,97 +197,6 @@ fun UserSelectionDialog(
             }
         }
     )
-}
-
-@Composable
-fun TabScreen(repository: GameRepository) {
-    var selectedTab by remember { mutableIntStateOf(0) }
-    var currentUser by remember { mutableStateOf<User?>(null) }
-    var showUserSelection by remember { mutableStateOf(false) }
-    val tabs = listOf("Играть", "Регистрация", "Правила", "Авторы", "Настройки", "Рекорды")
-    val context = LocalContext.current
-
-    val gameViewModel: GameViewModel = viewModel(
-        factory = GameViewModelFactory(repository, CbrApiService.create(), context)
-    )
-
-    var settings by remember { mutableStateOf(GameSettings()) }
-
-    LaunchedEffect(selectedTab) {
-        if (selectedTab == 0 && currentUser == null) {
-            showUserSelection = true
-        }
-    }
-
-    if (showUserSelection) {
-        UserSelectionDialog(
-            repository = repository,
-            onUserSelected = { user ->
-                currentUser = user
-                showUserSelection = false
-            },
-            onNewUser = {
-                selectedTab = 1
-                showUserSelection = false
-            },
-            onDismiss = { showUserSelection = false }
-        )
-    }
-
-    Column(modifier = Modifier
-        .fillMaxSize()
-        .systemBarsPadding()
-    ) {
-        if (currentUser != null) {
-            CurrentUserBar(
-                user = currentUser!!,
-                onLogout = { currentUser = null },
-                onSelectDifferent = { showUserSelection = true }
-            )
-        }
-
-        Box(
-            modifier = Modifier
-                .weight(1f)
-                .padding(top = 16.dp, bottom = 4.dp)
-        ) {
-            when (selectedTab) {
-                0 -> GameScreen(
-                    settings = settings,
-                    currentUser = currentUser,
-                    repository = repository,
-                    gameViewModel = gameViewModel,
-                    modifier = Modifier.fillMaxSize()
-                )
-                1 -> RegistrationScreen(
-                    repository = repository,
-                    onUserRegistered = { user ->
-                        currentUser = user
-                        selectedTab = 0
-                    }
-                )
-                2 -> RulesScreen()
-                3 -> AuthorsScreen()
-                4 -> SettingsScreen(settings = settings, onSettingsChange = { settings = it })
-                5 -> RecordsScreen(repository = repository)
-            }
-        }
-
-        TabRow(
-            selectedTabIndex = selectedTab,
-            modifier = Modifier
-                .fillMaxWidth()
-                .navigationBarsPadding()
-        ) {
-            tabs.forEachIndexed { index, title ->
-                Tab(
-                    text = { Text(text = title, fontSize = MaterialTheme.typography.bodySmall.fontSize) },
-                    selected = selectedTab == index,
-                    onClick = { selectedTab = index }
-                )
-            }
-        }
-    }
 }
 
 @Composable
